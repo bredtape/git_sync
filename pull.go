@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -62,6 +63,10 @@ func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	bundleData, err := git.BundleLocal(opt)
 	if err != nil {
 		if cmdErr, ok := err.(*CommandError); ok {
+			if opt.Since != 0 && strings.Contains(cmdErr.StdErr, "Refusing to create empty bundle") {
+				http.Error(w, fmt.Sprintf("no new commits since %v", time.Now().Add(-opt.Since)), http.StatusNoContent)
+				return
+			}
 			log.Error("bundle failed", "err", cmdErr.Err, "stderr", cmdErr.StdErr)
 		}
 		http.Error(w, fmt.Sprintf("Failed to create bundle: %v", err), http.StatusInternalServerError)
