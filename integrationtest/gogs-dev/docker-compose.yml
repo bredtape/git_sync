@@ -1,0 +1,59 @@
+volumes:
+  gogs_data:
+  gogs_config:
+  postgres_data:
+
+services:
+  gogs-server-1:
+    image: gogs/gogs:0.13.0
+    container_name: gogs-server-1
+    ports:
+      - "3000:3000"
+    volumes:
+      # overwrite the default configuration file
+      - ./app.ini:/data/gogs/conf/app.ini:ro
+      - gogs_data:/data
+      - gogs_config:/app/gogs
+    depends_on:
+      - postgres-1
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+
+  postgres-1:
+    image: postgres:13
+    container_name: postgres-1
+    volumes:
+      - ./postgres_data:/var/lib/postgresql/data
+    environment:
+      USER_UID: 1000
+      USER_GID: 1000
+      POSTGRES_DB: gogs
+      POSTGRES_USER: gogs
+      POSTGRES_PASSWORD: gogs
+
+  # # Second Gogs Server
+  # gogs-server-2:
+  #   image: gogs/gogs:0.13.0
+  #   container_name: gogs-server-2
+  #   ports:
+  #     - "3001:3000"
+  #     - "2221:22"
+  #   volumes:
+  #     - gogs-data-2:/data
+  #     - gogs-config-2:/app/gogs
+  #   depends_on:
+  #     - postgres-2
+  #   environment:
+  #     - USER_UID=1000
+  #     - USER_GID=1000
+
+  # db-2:
+  #   image: postgres:13
+  #   container_name: postgres-2
+  #   volumes:
+  #     - postgres-data-2:/var/lib/postgresql/data
+  #   environment:
+  #     - POSTGRES_DB=gogs
+  #     - POSTGRES_USER=gogs
+  #     - POSTGRES_PASSWORD=gogs-database-password-2
