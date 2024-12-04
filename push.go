@@ -2,66 +2,58 @@ package git_sync
 
 import (
 	"fmt"
-	"io"
+	"log/slog"
 	"net/http"
-	"os"
-	"os/exec"
-	"strings"
+
+	"github.com/gorilla/mux"
 )
 
 type GitPushHandler struct {
-	repoPath string
+	repo *gitCmds
 }
 
-func NewGitPushHandler(repoPath string) *GitPushHandler {
-	return &GitPushHandler{repoPath: repoPath}
+func NewGitPushHandler(repo *gitCmds) *GitPushHandler {
+	return &GitPushHandler{repo: repo}
 }
+
+// TODO: Consider when to remove local repo. Which errors should trigger the removal?
 
 func (h *GitPushHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// Extract branch and from commit from URL
-	parts := strings.Split(r.URL.Path, "/")
-	if len(parts) < 4 {
-		http.Error(w, "Invalid URL format", http.StatusBadRequest)
+	log := slog.With("repo", h.repo.remoteRepo, "op", "GitPushHandler.ServeHTTP")
+	defer r.Body.Close()
+
+	// Extract branch
+	xs := mux.Vars(r)
+	branch := xs["branch"]
+	if branch == "" {
+		http.Error(w, "Branch not specified", http.StatusBadRequest)
 		return
 	}
-	branch := parts[2]
-	//fromCommit := parts[3]
 
-	// Read the uploaded bundle
-	// Temp. dir root may be set with environment variable TMPDIR
-	bundleFile, err := os.CreateTemp("", "git-bundle-*")
+	// Clone to local
+	if _, err := h.repo.SyncRepoToLocalTemp(); err != nil {
+		if cmdErr, ok := err.(*CommandError); ok {
+			log.Error("sync to local failed", "err", cmdErr)
+		}
+		http.Error(w, fmt.Sprintf("failed to sync repository: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	err := h.repo.ApplyBundleToLocal(r.Body, branch)
 	if err != nil {
-		http.Error(w, "Failed to create temporary file", http.StatusInternalServerError)
+		if cmdErr, ok := err.(*CommandError); ok {
+			log.Error("failed to apply bundle", "err", cmdErr, "message", cmdErr.Message)
+		}
+		http.Error(w, fmt.Sprintf("failed to apply bundle: %v", err), http.StatusInternalServerError)
 		return
 	}
-	defer os.Remove(bundleFile.Name())
 
-	// Copy the uploaded bundle to the temporary file
-	_, err = io.Copy(bundleFile, r.Body)
+	err = h.repo.PushLocalToRemote(branch)
 	if err != nil {
-		http.Error(w, "Failed to read bundle", http.StatusBadRequest)
-		return
-	}
-	bundleFile.Close()
-
-	// Verify the bundle
-	verifyCmd := exec.Command("git", "-C", h.repoPath, "bundle", "verify", bundleFile.Name())
-	if err := verifyCmd.Run(); err != nil {
-		http.Error(w, "Invalid git bundle", http.StatusBadRequest)
-		return
-	}
-
-	// Fetch the bundle
-	fetchCmd := exec.Command("git", "-C", h.repoPath, "fetch", bundleFile.Name(), branch)
-	if err := fetchCmd.Run(); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to fetch bundle: %v", err), http.StatusInternalServerError)
-		return
-	}
-
-	// Merge the fetched commits
-	mergeCmd := exec.Command("git", "-C", h.repoPath, "merge", "--ff-only", "FETCH_HEAD")
-	if err := mergeCmd.Run(); err != nil {
-		http.Error(w, fmt.Sprintf("Failed to merge bundle: %v", err), http.StatusInternalServerError)
+		if cmdErr, ok := err.(*CommandError); ok {
+			log.Error("failed to push local", "err", cmdErr, "message", cmdErr.Message)
+		}
+		http.Error(w, fmt.Sprintf("failed to apply bundle: %v", err), http.StatusInternalServerError)
 		return
 	}
 
