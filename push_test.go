@@ -12,6 +12,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// tests assumes that integrationtest/gogs-dev is running
+
 /*
 To create a complete bundle:
 # git bundle create full.bundle main

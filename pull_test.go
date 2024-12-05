@@ -14,6 +14,8 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// tests assumes that integrationtest/gogs-dev is running
+
 func createTestServerWithPullHandler(t *testing.T, repo RemoteRepo, branch string) (*http.Client, string) {
 	h := NewGitPullHandler(t.TempDir(), repo)
 	mux := mux.NewRouter()
