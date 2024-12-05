@@ -27,6 +27,9 @@ type GIT struct {
 }
 
 func NewGIT(tempDir string, remoteRepo RemoteRepo, branch string) *GIT {
+	if tempDir == "" {
+		panic("tempDir must not be empty")
+	}
 	return &GIT{
 		workDir:    getWorkDir(tempDir, remoteRepo.Name, branch),
 		tempDir:    tempDir,
@@ -43,7 +46,6 @@ func (g GIT) ExistsLocal() (bool, error) {
 		return false, errors.Wrapf(err, "failed to determine if local repo exists at %s", g.workDir)
 	}
 	return true, nil
-
 }
 
 // clones repo from remoteURL if not exists, otherwise pulls the latest changes
@@ -328,6 +330,9 @@ func getWorkDir(tempDir, remoteURL, branch string) string {
 
 // creates a random temp dir. Must be cleaned up by caller
 func (g *GIT) getRandomTempDir() (string, error) {
+	if g.tempDir == "" {
+		return "", errors.New("tempDir not set")
+	}
 	dir := filepath.Join(g.tempDir, generateRandomString())
 	return dir, os.Mkdir(dir, os.ModePerm)
 }

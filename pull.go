@@ -16,7 +16,7 @@ type GitPullHandler struct {
 }
 
 func NewGitPullHandler(tempDir string, repo RemoteRepo) *GitPullHandler {
-	return &GitPullHandler{repo: repo}
+	return &GitPullHandler{tempDir: tempDir, repo: repo}
 }
 
 func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

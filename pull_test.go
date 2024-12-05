@@ -107,7 +107,9 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 
 	{
 		// add commits. Note that the TempDir returns a new directory each time
-		g := NewGIT(t.TempDir(), repo, branch)
+		tempDir := t.TempDir()
+		t.Logf("using tempDir=%s", tempDir)
+		g := NewGIT(tempDir, repo, branch)
 		worktree, err := g.initLocal()
 		if err != nil {
 			t.Fatal(err)
