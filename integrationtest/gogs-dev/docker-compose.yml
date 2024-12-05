@@ -25,9 +25,8 @@ services:
     container_name: postgres-1
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
+    user: "1000:1000" # must match local user id
     environment:
-      USER_UID: 1000
-      USER_GID: 1000
       POSTGRES_DB: gogs
       POSTGRES_USER: gogs
       POSTGRES_PASSWORD: gogs
