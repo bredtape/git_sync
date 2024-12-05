@@ -26,9 +26,9 @@ func (g *GogsAdmin) getGogsAPIClient() (string, *api.Client, error) {
 }
 
 type RemoteRepo struct {
-	Name  string
-	URL   string
-	Token string
+	Name      string
+	URL       string
+	AuthToken string
 }
 
 func (g *GogsAdmin) CreateRandomRepo() (RemoteRepo, error) {
@@ -47,9 +47,9 @@ func (g *GogsAdmin) CreateRandomRepo() (RemoteRepo, error) {
 	}
 
 	return RemoteRepo{
-		Name:  repo.Name,
-		URL:   repo.CloneURL,
-		Token: token,
+		Name:      repo.Name,
+		URL:       repo.CloneURL,
+		AuthToken: token,
 	}, nil
 }
 

@@ -18,6 +18,7 @@ type Config struct {
 	ListenAddress string
 	SourceRepo    string
 	SinkRepo      string
+	AuthToken     string
 	TempDir       string
 }
 
@@ -34,6 +35,7 @@ func readArgs() Config {
 	fs.StringVar(&config.ListenAddress, "listen-address", ":9180", "Address to listen on")
 	fs.StringVar(&config.SourceRepo, "source-repo", "", "Source repository")
 	fs.StringVar(&config.SinkRepo, "sink-repo", "", "Sink repository")
+	fs.StringVar(&config.AuthToken, "auth-token", "", "Authorization token for http requests. Required")
 	fs.StringVar(&config.TempDir, "temp-dir", "", "Temporary directory for git operations. Will use $TMPDIR if not set")
 
 	var logLevel slog.Level
@@ -71,12 +73,19 @@ func main() {
 
 	mux := mux.NewRouter()
 	if config.SourceRepo != "" {
-		// with optional since=<duration> query parameter
-		mux.Handle("/pull/{branch}", git_sync.NewGitPullHandler(config.TempDir, config.SourceRepo))
+		repo := git_sync.RemoteRepo{
+			Name:      config.SourceRepo,
+			URL:       config.SourceRepo,
+			AuthToken: config.AuthToken}
+		mux.Handle("/pull/{branch}", git_sync.NewGitPullHandler(config.TempDir, repo))
 		log.Debug("pull handler registered")
 	}
 	if config.SinkRepo != "" {
-		mux.Handle("/push/{branch}", git_sync.NewGitPushHandler(config.SinkRepo))
+		repo := git_sync.RemoteRepo{
+			Name:      config.SinkRepo,
+			URL:       config.SinkRepo,
+			AuthToken: config.AuthToken}
+		mux.Handle("/push/{branch}", git_sync.NewGitPushHandler(config.TempDir, repo))
 		log.Debug("push handler registered")
 	}
 

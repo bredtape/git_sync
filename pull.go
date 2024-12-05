@@ -11,15 +11,16 @@ import (
 )
 
 type GitPullHandler struct {
-	repo *gitCmds
+	repo    RemoteRepo
+	tempDir string
 }
 
-func NewGitPullHandler(repo *gitCmds) *GitPullHandler {
+func NewGitPullHandler(tempDir string, repo RemoteRepo) *GitPullHandler {
 	return &GitPullHandler{repo: repo}
 }
 
 func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log := slog.With("repo", h.repo.remoteRepo, "op", "GitPullHandler.ServeHTTP")
+	log := slog.With("repo.url", h.repo.URL, "op", "GitPullHandler.ServeHTTP")
 
 	// Extract branch
 	xs := mux.Vars(r)
@@ -30,6 +31,7 @@ func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	log = log.With("branch", branch)
+	git := NewGIT(h.tempDir, h.repo, branch)
 
 	opt := BundleOptions{}
 	sinceRaw := r.URL.Query().Get("since")
@@ -49,7 +51,7 @@ func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Clone to local
-	_, err := h.repo.SyncRepoToLocalTemp()
+	worktree, err := git.SyncRepoToLocalTemp()
 	if err != nil {
 		if cmdErr, ok := err.(*CommandError); ok {
 			log.Error("sync to local failed", "err", cmdErr)
@@ -58,7 +60,12 @@ func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	exists, err := h.repo.hasLocalBranch()
+	if worktree == nil {
+		http.Error(w, "remote repository does not exist", http.StatusNotFound)
+		return
+	}
+
+	exists, err := git.hasLocalBranch()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to check if branch exists: %v", err), http.StatusInternalServerError)
 		return
@@ -70,7 +77,7 @@ func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hasCommits, err := h.repo.hasLocalCommits()
+	hasCommits, err := git.hasLocalCommits()
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to check if branch has commits: %v", err), http.StatusInternalServerError)
 		return
@@ -82,7 +89,7 @@ func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	bundleData, err := h.repo.CreateBundleFromLocal(opt)
+	bundleData, err := git.CreateBundleFromLocal(opt)
 	if err != nil {
 		if cmdErr, ok := err.(*CommandError); ok {
 			if opt.Since != 0 && strings.Contains(cmdErr.StdErr, "Refusing to create empty bundle") {

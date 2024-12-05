@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -20,19 +21,20 @@ import (
 
 const remoteName = "origin"
 
-type gitCmds struct {
-	branch, workDir string
-	remoteRepo      RemoteRepo
+type GIT struct {
+	branch, workDir, tempDir string
+	remoteRepo               RemoteRepo
 }
 
-func newGIT(tempDir string, remoteRepo RemoteRepo, branch string) *gitCmds {
-	return &gitCmds{
+func NewGIT(tempDir string, remoteRepo RemoteRepo, branch string) *GIT {
+	return &GIT{
 		workDir:    getWorkDir(tempDir, remoteRepo.Name, branch),
+		tempDir:    tempDir,
 		remoteRepo: remoteRepo,
 		branch:     branch}
 }
 
-func (g gitCmds) ExistsLocal() (bool, error) {
+func (g GIT) ExistsLocal() (bool, error) {
 	_, err := git.PlainOpen(g.workDir)
 	if err != nil {
 		if errors.Is(err, git.ErrRepositoryNotExists) {
@@ -45,7 +47,8 @@ func (g gitCmds) ExistsLocal() (bool, error) {
 }
 
 // clones repo from remoteURL if not exists, otherwise pulls the latest changes
-func (g *gitCmds) SyncRepoToLocalTemp() (*git.Worktree, error) {
+// Returns nil worktree if remote does not exist
+func (g *GIT) SyncRepoToLocalTemp() (*git.Worktree, error) {
 	exists, err := g.ExistsLocal()
 	if err != nil {
 		return nil, err
@@ -57,7 +60,7 @@ func (g *gitCmds) SyncRepoToLocalTemp() (*git.Worktree, error) {
 	return g.cloneRepoToLocalTemp()
 }
 
-func (g *gitCmds) cloneRepoToLocalTemp() (*git.Worktree, error) {
+func (g *GIT) cloneRepoToLocalTemp() (*git.Worktree, error) {
 	local, err := git.PlainClone(g.workDir, false, &git.CloneOptions{
 		RemoteName:    remoteName,
 		URL:           g.remoteRepo.URL,
@@ -68,13 +71,17 @@ func (g *gitCmds) cloneRepoToLocalTemp() (*git.Worktree, error) {
 		if errors.Is(err, transport.ErrEmptyRemoteRepository) {
 			return g.initLocal()
 		}
+		if errors.Is(err, transport.ErrRepositoryNotFound) {
+			return nil, nil
+		}
+		slog.Warn("error type", "type", fmt.Sprintf("%T", err))
 		return nil, errors.Wrapf(err, "failed to clone repository %s for branch %s", g.remoteRepo.URL, g.branch)
 	}
 
 	return local.Worktree()
 }
 
-func (g *gitCmds) hasLocalBranch() (bool, error) {
+func (g *GIT) hasLocalBranch() (bool, error) {
 	localRepo, err := git.PlainOpen(g.workDir)
 	if err != nil {
 		return false, err
@@ -87,7 +94,7 @@ func (g *gitCmds) hasLocalBranch() (bool, error) {
 	return b != nil, nil
 }
 
-func (g *gitCmds) hasLocalCommits() (bool, error) {
+func (g *GIT) hasLocalCommits() (bool, error) {
 	localRepo, err := git.PlainOpen(g.workDir)
 	if err != nil {
 		return false, err
@@ -114,7 +121,7 @@ func (g *gitCmds) hasLocalCommits() (bool, error) {
 	return commit != nil, nil
 }
 
-func (g *gitCmds) initLocal() (*git.Worktree, error) {
+func (g *GIT) initLocal() (*git.Worktree, error) {
 	repo, err := git.PlainInit(g.workDir, false)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to init repository %s for branch %s", g.remoteRepo.URL, g.branch)
@@ -182,7 +189,7 @@ func (g *gitCmds) initLocal() (*git.Worktree, error) {
 	return worktree, nil
 }
 
-func (g *gitCmds) pullRepoToLocalTemp() (*git.Worktree, error) {
+func (g *GIT) pullRepoToLocalTemp() (*git.Worktree, error) {
 	w, err := g.getWorktree()
 	if err != nil {
 		return nil, err
@@ -196,12 +203,15 @@ func (g *gitCmds) pullRepoToLocalTemp() (*git.Worktree, error) {
 		Auth:          g.getAuth()})
 
 	if err != nil {
+		if errors.Is(err, git.NoErrAlreadyUpToDate) {
+			return w, nil
+		}
 		return nil, errors.Wrapf(err, "failed to pull repository %s for branch %s", g.remoteRepo.URL, g.branch)
 	}
 	return w, nil
 }
 
-func (g *gitCmds) PushLocalToRemote(branch string) error {
+func (g *GIT) PushLocalToRemote(branch string) error {
 	localRepo, err := git.PlainOpen(g.workDir)
 	if err != nil {
 		return err
@@ -213,6 +223,9 @@ func (g *gitCmds) PushLocalToRemote(branch string) error {
 		Auth:       g.getAuth()})
 
 	if err != nil {
+		if errors.Is(err, git.NoErrAlreadyUpToDate) {
+			return nil
+		}
 		return errors.Wrapf(err, "failed to push local repository %s for branch %s", g.remoteRepo.URL, branch)
 	}
 	return nil
@@ -220,15 +233,32 @@ func (g *gitCmds) PushLocalToRemote(branch string) error {
 }
 
 // apply bundle to local repo with "git fetch"
-func (g *gitCmds) ApplyBundleToLocal(r io.Reader, branch string) error {
-	cmd := exec.Command("git", "-C", g.workDir, "fetch", "/dev/stdin", fmt.Sprintf("%s:%s", branch, branch))
+func (g *GIT) ApplyBundleToLocal(r io.Reader, branch string) error {
+	// "git pull" requires that the bundle is stored on disk
+	dir, err := g.getRandomTempDir()
+	if err != nil {
+		return errors.Wrap(err, "failed to create temp dir")
+	}
+	defer os.RemoveAll(dir)
+	tmpFile := filepath.Join(dir, "bundle")
+	f, err := os.OpenFile(tmpFile, os.O_CREATE|os.O_WRONLY, os.ModePerm)
+	if err != nil {
+		return errors.Wrap(err, "failed to create temp file for bundle")
+	}
+	defer f.Close()
+	_, err = io.Copy(f, r)
+	if err != nil {
+		return errors.Wrap(err, "failed to write bundle to temp file")
+	}
+
+	cmd := exec.Command("git", "-C", g.workDir, "pull", tmpFile, branch)
 	cmd.Stdin = r
 	stderr := &bytes.Buffer{}
 	cmd.Stderr = stderr
 	stdout := &bytes.Buffer{}
 	cmd.Stdout = stdout
 
-	err := cmd.Run()
+	err = cmd.Run()
 	if err != nil {
 		return &CommandError{
 			Message:  fmt.Sprintf("failed to apply bundle for repository %s and branch %s", g.remoteRepo.URL, branch),
@@ -245,7 +275,7 @@ type BundleOptions struct {
 	Since time.Duration
 }
 
-func (g *gitCmds) CreateBundleFromLocal(opt BundleOptions) ([]byte, error) {
+func (g *GIT) CreateBundleFromLocal(opt BundleOptions) ([]byte, error) {
 	log := slog.With("op", "CreateBundleFromLocal", "repo", g.remoteRepo, "branch", g.branch)
 	cmd := exec.Command("git", "-C", g.workDir, "bundle", "create", "-", g.branch)
 	if opt.Since != 0 {
@@ -267,11 +297,42 @@ func (g *gitCmds) CreateBundleFromLocal(opt BundleOptions) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
-func getWorkDir(tempDir, remoteURL, branch string) string {
-	return path.Join(tempDir, base64.URLEncoding.EncodeToString([]byte(remoteURL+branch)))
+type BundleInfo struct {
+	IsCompleteHistory bool
 }
 
-func (g *gitCmds) getWorktree() (*git.Worktree, error) {
+func (g *GIT) GetBundleInfo(bundleData []byte) (BundleInfo, error) {
+	cmd := exec.Command("git", "bundle", "verify", "-")
+	cmd.Stdin = bytes.NewReader(bundleData)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return BundleInfo{}, &CommandError{
+			Message:  fmt.Sprintf("failed to verify bundle for repository %s and branch %s", g.remoteRepo.URL, g.branch),
+			Err:      err,
+			StdErr:   stderr.String(),
+			ExitCode: cmd.ProcessState.ExitCode()}
+	}
+
+	result := BundleInfo{
+		IsCompleteHistory: bytes.Contains(stdout.Bytes(), []byte("complete history"))}
+
+	return result, nil
+}
+
+func getWorkDir(tempDir, remoteURL, branch string) string {
+	return filepath.Join(tempDir, base64.URLEncoding.EncodeToString([]byte(remoteURL+branch)))
+}
+
+// creates a random temp dir. Must be cleaned up by caller
+func (g *GIT) getRandomTempDir() (string, error) {
+	dir := filepath.Join(g.tempDir, generateRandomString())
+	return dir, os.Mkdir(dir, os.ModePerm)
+}
+
+func (g *GIT) getWorktree() (*git.Worktree, error) {
 	localRepo, err := git.PlainOpen(g.workDir)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to open local repository %s for branch %s", g.remoteRepo.URL, g.branch)
@@ -284,8 +345,8 @@ func (g *gitCmds) getWorktree() (*git.Worktree, error) {
 	return w, nil
 }
 
-func (g *gitCmds) getAuth() http.AuthMethod {
+func (g *GIT) getAuth() http.AuthMethod {
 	return &http.BasicAuth{
 		Username: "not_used", // must not be empty
-		Password: g.remoteRepo.Token}
+		Password: g.remoteRepo.AuthToken}
 }

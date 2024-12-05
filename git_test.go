@@ -21,7 +21,7 @@ func TestCreateRepoAndPushSomeCommits(t *testing.T) {
 
 	t.Logf("Created repository, name=%s, cloneURL=%s", repo.Name, repo.URL)
 	branch := "main"
-	g := newGIT(t.TempDir(), repo, branch)
+	g := NewGIT(t.TempDir(), repo, branch)
 	worktree, err := g.SyncRepoToLocalTemp()
 	if err != nil {
 		t.Fatal(err)

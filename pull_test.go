@@ -8,10 +8,59 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/gorilla/mux"
 )
+
+func createTestServerWithPullHandler(t *testing.T, repo RemoteRepo, branch string) (*http.Client, string) {
+	h := NewGitPullHandler(t.TempDir(), repo)
+	mux := mux.NewRouter()
+	mux.Handle("/pull/{branch}", h)
+	server := httptest.NewServer(mux)
+
+	t.Cleanup(func() {
+		server.Close()
+	})
+
+	return server.Client(), server.URL + "/pull/" + branch
+}
+
+func TestPullRemoteRepoDoesNotExist(t *testing.T) {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
+	gogsAdmin := NewGogsAdmin(user, password, baseURL)
+	repo, err := gogsAdmin.CreateRandomRepo()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo.URL += "_not"
+	repo.Name += "_not"
+
+	t.Logf("non-existing repo, name=%s, cloneURL=%s", repo.Name, repo.URL)
+
+	branch := "main"
+	client, serverURL := createTestServerWithPullHandler(t, repo, branch)
+
+	req, err := http.NewRequest(http.MethodGet, serverURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Requesting %s", req.URL.String())
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectedStatus := http.StatusNotFound
+	if resp.StatusCode != expectedStatus {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected status %d, got status=%d, body='%s'", expectedStatus, resp.StatusCode, string(body))
+	}
+}
 
 func TestPullFullBundleEmptyRepo(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
@@ -24,15 +73,10 @@ func TestPullFullBundleEmptyRepo(t *testing.T) {
 
 	t.Logf("Created repository, name=%s, cloneURL=%s", repo.Name, repo.URL)
 
-	h := NewGitPullHandler(newGIT(t.TempDir(), repo, "main"))
-	mux := mux.NewRouter()
-	mux.Handle("/pull/{branch}", h)
-	server := httptest.NewServer(mux)
-	defer server.Close()
+	branch := "main"
+	client, serverURL := createTestServerWithPullHandler(t, repo, branch)
 
-	client := server.Client()
-
-	req, err := http.NewRequest(http.MethodGet, server.URL+"/pull/main", nil)
+	req, err := http.NewRequest(http.MethodGet, serverURL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +107,7 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 
 	{
 		// add commits. Note that the TempDir returns a new directory each time
-		g := newGIT(t.TempDir(), repo, branch)
+		g := NewGIT(t.TempDir(), repo, branch)
 		worktree, err := g.initLocal()
 		if err != nil {
 			t.Fatal(err)
@@ -93,15 +137,9 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 		t.Logf("pushed commits to remote repository")
 	}
 
-	h := NewGitPullHandler(newGIT(t.TempDir(), repo, branch))
-	mux := mux.NewRouter()
-	mux.Handle("/pull/{branch}", h)
-	server := httptest.NewServer(mux)
-	defer server.Close()
+	client, serverURL := createTestServerWithPullHandler(t, repo, branch)
 
-	client := server.Client()
-
-	req, err := http.NewRequest(http.MethodGet, server.URL+"/pull/main", nil)
+	req, err := http.NewRequest(http.MethodGet, serverURL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,5 +154,43 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected status 200, got %d, body %s", resp.StatusCode, string(body))
+	}
+
+	// pull with 'since' parameter
+	req, err = http.NewRequest(http.MethodGet, serverURL+"?since=1h", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Requesting %s", req.URL.String())
+
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected status 200, got %d, body %s", resp.StatusCode, string(body))
+	}
+
+	// pull with 'since' parameter
+	t.Logf("sleeping for 2 seconds, because 'since' minimum value is 1s")
+	time.Sleep(2 * time.Second)
+	req, err = http.NewRequest(http.MethodGet, serverURL+"?since=1s", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("Requesting %s", req.URL.String())
+
+	resp, err = client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("expected status 204, got %d, body %s", resp.StatusCode, string(body))
 	}
 }
