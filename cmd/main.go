@@ -61,10 +61,11 @@ func readArgs() Config {
 	}
 
 	var config Config
+	var authTokenFile string
 	fs.StringVar(&config.ListenAddress, "listen-address", ":8185", "Address to listen on")
 	fs.StringVar(&config.SourceRepo, "source-repo", "", "Source repository")
 	fs.StringVar(&config.SinkRepo, "sink-repo", "", "Sink repository")
-	fs.StringVar(&config.AuthToken, "auth-token", "", "Authorization token for http requests. Required")
+	fs.StringVar(&authTokenFile, "auth-token-file", "", "Authorization token for http requests. Required")
 	fs.StringVar(&config.TempDir, "temp-dir", "", "Temporary directory for git operations. Will use $TMPDIR if not set")
 	fs.BoolVar(&config.EnableHTTPS, "enable-https", false, "Enable HTTPS")
 	fs.StringVar(&config.CertFile, "cert-file", "", "Certificate file. Required if enable-https is set")
@@ -95,6 +96,14 @@ func readArgs() Config {
 
 	if config.TempDir == "" {
 		config.TempDir = os.TempDir()
+	}
+
+	if authTokenFile != "" {
+		token, err := os.ReadFile(authTokenFile)
+		if err != nil {
+			bail(fs, "failed to read auth-token-file: %v", err)
+		}
+		config.AuthToken = strings.TrimSpace(string(token))
 	}
 
 	if err := config.Validate(); err != nil {
