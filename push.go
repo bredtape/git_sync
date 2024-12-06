@@ -21,13 +21,25 @@ func NewGitPushHandler(tempDir string, repo RemoteRepo) *GitPushHandler {
 // TODO: Consider when to remove local repo. Which errors should trigger the removal?
 
 func (h *GitPushHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	log := slog.With("repo.url", h.repo.URL, "op", "GitPushHandler.ServeHTTP")
 	defer r.Body.Close()
+
+	metricOps.WithLabelValues("push").Inc()
+	metricOpsError.WithLabelValues("push")
+
+	success := h.push(w, r)
+	if !success {
+		metricOpsError.WithLabelValues("push").Inc()
+	}
+}
+
+func (h *GitPushHandler) push(w http.ResponseWriter, r *http.Request) (success bool) {
+	log := slog.With("repo.url", h.repo.URL, "op", "GitPushHandler.ServeHTTP")
 
 	// Extract branch
 	xs := mux.Vars(r)
 	branch := xs["branch"]
 	if branch == "" {
+		log.Debug("Branch not specified")
 		http.Error(w, "Branch not specified", http.StatusBadRequest)
 		return
 	}
@@ -46,6 +58,7 @@ func (h *GitPushHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if worktree == nil {
+		log.Debug("remote repository does not exist")
 		http.Error(w, fmt.Sprintf("remote repository (%s) does not exist", git.remoteRepo.URL), http.StatusNotFound)
 		return
 	}
@@ -65,10 +78,13 @@ func (h *GitPushHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	err = git.PushLocalToRemote(branch)
 	if err != nil {
+		log.Error("failed to push local to remote", "err", err)
 		http.Error(w, fmt.Sprintf("failed to apply bundle: %v", err), http.StatusInternalServerError)
 		return
 	}
 
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("Bundle successfully pushed"))
+	log.Debug("bundle pushed successfully")
+	return success
 }
