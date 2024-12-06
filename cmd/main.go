@@ -61,7 +61,7 @@ func readArgs() Config {
 	}
 
 	var config Config
-	fs.StringVar(&config.ListenAddress, "listen-address", ":9180", "Address to listen on")
+	fs.StringVar(&config.ListenAddress, "listen-address", ":8185", "Address to listen on")
 	fs.StringVar(&config.SourceRepo, "source-repo", "", "Source repository")
 	fs.StringVar(&config.SinkRepo, "sink-repo", "", "Sink repository")
 	fs.StringVar(&config.AuthToken, "auth-token", "", "Authorization token for http requests. Required")
