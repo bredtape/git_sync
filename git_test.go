@@ -13,15 +13,20 @@ const password = "computer"
 const baseURL = "http://localhost:3000"
 
 func TestCreateRepoAndPushSomeCommits(t *testing.T) {
+	branch := "main"
+
 	gogsAdmin := NewGogsAdmin(user, password, baseURL)
-	repo, err := gogsAdmin.CreateRandomRepo()
+	repo, err := gogsAdmin.CreateRandomRepo(branch)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	t.Logf("Created repository, name=%s, cloneURL=%s", repo.Name, repo.URL)
-	branch := "main"
-	g := NewGIT(t.TempDir(), repo, branch)
+	t.Logf("Created repository, cloneURL=%s, branch=%s", repo.URL, repo.Branch)
+
+	g, err := NewGIT(t.TempDir(), repo)
+	if err != nil {
+		t.Fatal(err)
+	}
 	worktree, err := g.SyncRepoToLocalTemp()
 	if err != nil {
 		t.Fatal(err)
@@ -43,7 +48,7 @@ func TestCreateRepoAndPushSomeCommits(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = g.PushLocalToRemote(branch)
+	err = g.PushLocalToRemote()
 	if err != nil {
 		t.Fatal(err)
 	}

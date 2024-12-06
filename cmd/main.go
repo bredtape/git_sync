@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -20,23 +21,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+//go:embed index.html
+var indexHTML []byte
+
 type Config struct {
 	ListenAddress               string
-	SourceRepo                  string
-	SinkRepo                    string
-	AuthToken                   string
 	TempDir                     string
 	EnableHTTPS                 bool
 	CertFile, CertServerKeyFile string
 }
 
 func (c Config) Validate() error {
-	if c.AuthToken == "" {
-		return fmt.Errorf("auth-token must be set")
-	}
-	if c.SourceRepo == "" && c.SinkRepo == "" {
-		return fmt.Errorf("either source-repo or sink-repo must be set")
-	}
 	if c.TempDir == "" {
 		return fmt.Errorf("temp-dir must be set")
 	}
@@ -61,11 +56,7 @@ func readArgs() Config {
 	}
 
 	var config Config
-	var authTokenFile string
 	fs.StringVar(&config.ListenAddress, "listen-address", ":8185", "Address to listen on")
-	fs.StringVar(&config.SourceRepo, "source-repo", "", "Source repository")
-	fs.StringVar(&config.SinkRepo, "sink-repo", "", "Sink repository")
-	fs.StringVar(&authTokenFile, "auth-token-file", "", "Authorization token for http requests. Required")
 	fs.StringVar(&config.TempDir, "temp-dir", "", "Temporary directory for git operations. Will use $TMPDIR if not set")
 	fs.BoolVar(&config.EnableHTTPS, "enable-https", false, "Enable HTTPS")
 	fs.StringVar(&config.CertFile, "cert-file", "", "Certificate file. Required if enable-https is set")
@@ -90,20 +81,8 @@ func readArgs() Config {
 	}
 	slogging.SetDefault(logLevel, false, logJSON)
 
-	if config.SourceRepo == "" && config.SinkRepo == "" {
-		bail(fs, "either source-repo or sink-repo must be set")
-	}
-
 	if config.TempDir == "" {
 		config.TempDir = os.TempDir()
-	}
-
-	if authTokenFile != "" {
-		token, err := os.ReadFile(authTokenFile)
-		if err != nil {
-			bail(fs, "failed to read auth-token-file: %v", err)
-		}
-		config.AuthToken = strings.TrimSpace(string(token))
 	}
 
 	if err := config.Validate(); err != nil {
@@ -116,53 +95,18 @@ func readArgs() Config {
 func main() {
 	ctx := context.Background()
 	config := readArgs()
-	log := slog.With("op", "main", "listenAddress", config.ListenAddress, "sourceRepo", config.SourceRepo, "sinkRepo", config.SinkRepo,
-		"tempDir", config.TempDir, "enableHTTPS", config.EnableHTTPS)
+	log := slog.With("op", "main", "listenAddress", config.ListenAddress, "tempDir", config.TempDir, "enableHTTPS", config.EnableHTTPS)
 
 	mux := mux.NewRouter()
-	if config.SourceRepo != "" {
-		repo := git_sync.RemoteRepo{
-			Name:      config.SourceRepo,
-			URL:       config.SourceRepo,
-			AuthToken: config.AuthToken}
-		mux.Handle("/pull/{branch}", git_sync.NewGitPullHandler(config.TempDir, repo))
-		log.Debug("pull handler registered")
-	}
-	if config.SinkRepo != "" {
-		repo := git_sync.RemoteRepo{
-			Name:      config.SinkRepo,
-			URL:       config.SinkRepo,
-			AuthToken: config.AuthToken}
-		mux.Handle("/push/{branch}", git_sync.NewGitPushHandler(config.TempDir, repo))
-		log.Debug("push handler registered")
-	}
-
+	mux.Handle("/pull", git_sync.NewGitPullHandler(config.TempDir))
+	mux.Handle("/push", git_sync.NewGitPushHandler(config.TempDir))
 	mux.Handle("/metrics", promhttp.Handler())
 
 	// TODO: Add page at / to explain the endpoints
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Add("Content-Type", "text/html")
-
 		body := strings.Builder{}
-		body.WriteString(`<html><body>
-<h1>Git Sync</h1>
-Repository path: ` + config.SourceRepo + `
-<p>Use the following endpoints to sync git repositories:</p>
-<ul>`)
-
-		if config.SourceRepo != "" {
-			body.WriteString(`<li><a href="/pull/{branch}">/pull/{branch}</a> - Pull changes from a git repository. With optional since=&ltduration&gt query parameter. Otherwise all is returned</li>
-	`)
-		}
-		if config.SinkRepo != "" {
-			body.WriteString(`
-	<li><a href="/push/{branch}">/push/{branch}</a> - Push changes to a git repository</li>`)
-		}
-		body.WriteString(`
-</ul>
-</body></html>
-`)
-
+		body.Write(indexHTML)
 		w.Write([]byte(body.String()))
 	}))
 

@@ -1,0 +1,31 @@
+<html>
+  <body>
+    <h1>Git Sync</h1>
+    <p>Use the following endpoints to sync git repositories:</p>
+    <ul>
+      <li>
+        <a href="/pull">GET /pull</a> - Pull changes from a git repository
+      </li>
+      <li><a href="/push">POST /push</a> - Push changes to a git repository</li>
+    </ul>
+    <p>The following query parameters are supported:</p>
+    <ul>
+      <li>branch=&ltbranch&gt - The branch to pull or push</li>
+      <li>
+        repository=&ltrepository&gt - The repository to pull or push. Only
+        http/https are supported
+      </li>
+      <li>
+        since=&ltduration&gt - When pulling, only return changes since the given
+        duration. Example: since=1h30m
+      </li>
+    </ul>
+    <h2>Authentication</h2>
+    <p>
+      To authenticate to the 'repository', set the Authorization header to
+      'Bearer &lttoken&gt' where token is the token for the repository
+    </p>
+    <h2>Metrics</h2>
+    <p>Metrics are available at <a href="/metrics">/metrics</a></p>
+  </body>
+</html>

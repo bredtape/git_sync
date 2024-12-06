@@ -7,56 +7,38 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 var (
 	metricOps = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "git_sync_ops_total",
-		Help: "Total number of git sync operations attempted"}, []string{"op"})
+		Help: "Total number of git sync operations attempted"}, []string{"op", "repository_url"})
 
 	metricOpsError = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "git_sync_ops_error_total",
-		Help: "Total number of git sync operations attempted, that resulted in some error"}, []string{"op"})
+		Help: "Total number of git sync operations attempted, that resulted in some error"}, []string{"op", "repository_url"})
 )
 
 type GitPullHandler struct {
-	repo    RemoteRepo
 	tempDir string
 }
 
-func NewGitPullHandler(tempDir string, repo RemoteRepo) *GitPullHandler {
-	return &GitPullHandler{tempDir: tempDir, repo: repo}
+func NewGitPullHandler(tempDir string) *GitPullHandler {
+	return &GitPullHandler{tempDir: tempDir}
 }
 
 func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	metricOps.WithLabelValues("pull").Inc()
-	metricOpsError.WithLabelValues("pull")
+	log := slog.With("op", "GitPullHandler.ServeHTTP")
 
-	success := h.pull(w, r)
-	if !success {
-		metricOpsError.WithLabelValues("pull").Inc()
-	}
-}
-
-func (h *GitPullHandler) pull(w http.ResponseWriter, r *http.Request) (success bool) {
-	log := slog.With("repo.url", h.repo.URL, "op", "GitPullHandler.ServeHTTP")
-	ctx := r.Context()
-
-	// Extract branch
-	xs := mux.Vars(r)
-	branch := xs["branch"]
-	if branch == "" {
-		log.Debug("Branch not specified")
-		http.Error(w, "Branch not specified", http.StatusBadRequest)
+	remoteRepo, err := extractArgs(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	log = log.With("branch", branch)
-	git := NewGIT(h.tempDir, h.repo, branch)
+	log = log.With("repo.url", remoteRepo.URL, "repo.branch", remoteRepo.Branch, "repo.token", remoteRepo.Token)
 
 	opt := BundleOptions{}
 	sinceRaw := r.URL.Query().Get("since")
@@ -75,6 +57,23 @@ func (h *GitPullHandler) pull(w http.ResponseWriter, r *http.Request) (success b
 
 		opt.Since = d
 		log = log.With("since", d)
+	}
+
+	metricOps.WithLabelValues("pull", remoteRepo.URL).Inc()
+	mErr := metricOpsError.WithLabelValues("pull", remoteRepo.URL)
+
+	success := h.pull(log, remoteRepo, opt, w)
+	if !success {
+		mErr.Inc()
+	}
+}
+
+func (h *GitPullHandler) pull(log *slog.Logger, remoteRepo RemoteRepo, opt BundleOptions, w http.ResponseWriter) (success bool) {
+	git, err := NewGIT(h.tempDir, remoteRepo)
+	if err != nil {
+		log.Error("failed to create git", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
 	}
 
 	// Clone to local
@@ -139,6 +138,35 @@ func (h *GitPullHandler) pull(w http.ResponseWriter, r *http.Request) (success b
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename=git-bundle")
 	w.Write(bundleData)
-	log.Log(ctx, slog.LevelDebug-3, "bundle created")
+	log.Debug("bundle created")
 	return true
+}
+
+func extractArgs(r *http.Request) (RemoteRepo, error) {
+	args := RemoteRepo{
+		URL:    r.URL.Query().Get("repository"),
+		Branch: r.URL.Query().Get("branch")}
+	if args.URL == "" {
+		return args, fmt.Errorf("no 'repository' specified")
+	}
+	if args.Branch == "" {
+		return args, fmt.Errorf("no 'branch' specified")
+	}
+
+	token, err := extractAuthToken(r)
+	args.Token = token
+	return args, err
+}
+
+func extractAuthToken(r *http.Request) (string, error) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" {
+		return "", fmt.Errorf("no Authorization header")
+	}
+
+	if !strings.HasPrefix(authHeader, "Bearer ") {
+		return "", fmt.Errorf("invalid Authorization header")
+	}
+
+	return strings.TrimPrefix(authHeader, "Bearer "), nil
 }

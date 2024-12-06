@@ -26,12 +26,12 @@ func (g *GogsAdmin) getGogsAPIClient() (string, *api.Client, error) {
 }
 
 type RemoteRepo struct {
-	Name      string
-	URL       string
-	AuthToken string
+	URL    string
+	Branch string
+	Token  string
 }
 
-func (g *GogsAdmin) CreateRandomRepo() (RemoteRepo, error) {
+func (g *GogsAdmin) CreateRandomRepo(branch string) (RemoteRepo, error) {
 	token, client, err := g.getGogsAPIClient()
 	if err != nil {
 		return RemoteRepo{}, errors.Wrap(err, "failed to create client with access token")
@@ -47,10 +47,9 @@ func (g *GogsAdmin) CreateRandomRepo() (RemoteRepo, error) {
 	}
 
 	return RemoteRepo{
-		Name:      repo.Name,
-		URL:       repo.CloneURL,
-		AuthToken: token,
-	}, nil
+		URL:    repo.CloneURL,
+		Branch: branch,
+		Token:  token}, nil
 }
 
 func generateRandomString() string {

@@ -21,40 +21,36 @@ To create a partial bundle with the last n=1 commit:
 # git bundle create last.bundle main~1..main
 */
 
-func createTestServerWithPushHandler(t *testing.T, repo RemoteRepo, branch string) (*http.Client, string) {
-	h := NewGitPushHandler(t.TempDir(), repo)
+func createTestServerWithPushHandler(t *testing.T) (*http.Client, string) {
+	h := NewGitPushHandler(t.TempDir())
 	mux := mux.NewRouter()
-	mux.Handle("/push/{branch}", h)
+	mux.Handle("/push", h)
 	server := httptest.NewServer(mux)
 
 	t.Cleanup(func() {
 		server.Close()
 	})
 
-	return server.Client(), server.URL + "/push/" + branch
+	return server.Client(), server.URL + "/push"
 }
 
 func TestPushFullBundleExistingRepo(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
+	branch := "main"
 	gogsAdmin := NewGogsAdmin(user, password, baseURL)
-	repo, err := gogsAdmin.CreateRandomRepo()
+	repo, err := gogsAdmin.CreateRandomRepo(branch)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	t.Logf("Created repository, name=%s, cloneURL=%s", repo.Name, repo.URL)
+	t.Logf("Created repository, cloneURL=%s, branch=%s", repo.URL, repo.Branch)
 
-	branch := "main"
-	client, serverURL := createTestServerWithPushHandler(t, repo, branch)
+	client, serverURL := createTestServerWithPushHandler(t)
 
 	// full bundle
 	{
-		req, err := http.NewRequest(http.MethodPost, serverURL, bytes.NewReader(testdata.FullBundle))
-		if err != nil {
-			t.Fatal(err)
-		}
-
+		req := createPushHTTPRequest(t, serverURL, repo, testdata.FullBundle)
 		t.Logf("pushing full bundle to %s", req.URL.String())
 
 		resp, err := client.Do(req)
@@ -70,11 +66,7 @@ func TestPushFullBundleExistingRepo(t *testing.T) {
 	}
 
 	{
-		req, err := http.NewRequest(http.MethodPost, serverURL, bytes.NewReader(testdata.LastBundle))
-		if err != nil {
-			t.Fatal(err)
-		}
-
+		req := createPushHTTPRequest(t, serverURL, repo, testdata.LastBundle)
 		t.Logf("pushing partial bundle (that already should have been pushed) to %s", req.URL.String())
 
 		resp, err := client.Do(req)
@@ -93,22 +85,17 @@ func TestPushFullBundleExistingRepo(t *testing.T) {
 func TestPushPartialBundleMissingHistoryToExistingRepo(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
-	gogsAdmin := NewGogsAdmin(user, password, baseURL)
-	repo, err := gogsAdmin.CreateRandomRepo()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf("Created repository, name=%s, cloneURL=%s", repo.Name, repo.URL)
-
 	branch := "main"
-	client, serverURL := createTestServerWithPushHandler(t, repo, branch)
-
-	req, err := http.NewRequest(http.MethodPost, serverURL, bytes.NewReader(testdata.LastBundle))
+	gogsAdmin := NewGogsAdmin(user, password, baseURL)
+	repo, err := gogsAdmin.CreateRandomRepo(branch)
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	t.Logf("Created repository, cloneURL=%s, branch=%s", repo.URL, repo.Branch)
+
+	client, serverURL := createTestServerWithPushHandler(t)
+	req := createPushHTTPRequest(t, serverURL, repo, testdata.LastBundle)
 	t.Logf("pushing partial bundle (that already should have been pushed) to %s", req.URL.String())
 
 	resp, err := client.Do(req)
@@ -121,4 +108,20 @@ func TestPushPartialBundleMissingHistoryToExistingRepo(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected status %d, got %d, body: %s", expectedStatus, resp.StatusCode, string(body))
 	}
+}
+
+func createPushHTTPRequest(t *testing.T, serverURL string, repo RemoteRepo, bundleData []byte) *http.Request {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodPost, serverURL, bytes.NewReader(bundleData))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+repo.Token)
+	q := req.URL.Query()
+	q.Add("repository", repo.URL)
+	q.Add("branch", repo.Branch)
+	req.URL.RawQuery = q.Encode()
+	return req
 }

@@ -2,20 +2,18 @@ package git_sync
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
-
-	"github.com/gorilla/mux"
 )
 
 type GitPushHandler struct {
-	repo    RemoteRepo
 	tempDir string
 }
 
-func NewGitPushHandler(tempDir string, repo RemoteRepo) *GitPushHandler {
-	return &GitPushHandler{tempDir: tempDir, repo: repo}
+func NewGitPushHandler(tempDir string) *GitPushHandler {
+	return &GitPushHandler{tempDir: tempDir}
 }
 
 // TODO: Consider when to remove local repo. Which errors should trigger the removal?
@@ -23,29 +21,29 @@ func NewGitPushHandler(tempDir string, repo RemoteRepo) *GitPushHandler {
 func (h *GitPushHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
-	metricOps.WithLabelValues("push").Inc()
-	metricOpsError.WithLabelValues("push")
+	remoteRepo, err := extractArgs(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	log := slog.With("op", "GitPushHandler.ServeHTTP", "repo.url", remoteRepo.URL, "repo.branch", remoteRepo.Branch, "repo.token", remoteRepo.Token)
 
-	success := h.push(w, r)
+	metricOps.WithLabelValues("push", remoteRepo.URL).Inc()
+	mErr := metricOpsError.WithLabelValues("push", remoteRepo.URL)
+
+	success := h.push(log, remoteRepo, r.Body, w)
 	if !success {
-		metricOpsError.WithLabelValues("push").Inc()
+		mErr.Inc()
 	}
 }
 
-func (h *GitPushHandler) push(w http.ResponseWriter, r *http.Request) (success bool) {
-	log := slog.With("repo.url", h.repo.URL, "op", "GitPushHandler.ServeHTTP")
-
-	// Extract branch
-	xs := mux.Vars(r)
-	branch := xs["branch"]
-	if branch == "" {
-		log.Debug("Branch not specified")
-		http.Error(w, "Branch not specified", http.StatusBadRequest)
+func (h *GitPushHandler) push(log *slog.Logger, remoteRepo RemoteRepo, bundleData io.Reader, w http.ResponseWriter) (success bool) {
+	git, err := NewGIT(h.tempDir, remoteRepo)
+	if err != nil {
+		log.Error("failed to create git", "err", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-
-	log = log.With("branch", branch)
-	git := NewGIT(h.tempDir, h.repo, branch)
 
 	// Clone to local
 	worktree, err := git.SyncRepoToLocalTemp()
@@ -63,7 +61,7 @@ func (h *GitPushHandler) push(w http.ResponseWriter, r *http.Request) (success b
 		return
 	}
 
-	err = git.ApplyBundleToLocal(r.Body, branch)
+	err = git.ApplyBundleToLocal(bundleData)
 	if err != nil {
 		if cmdErr, ok := err.(*CommandError); ok {
 			log.Error("failed to apply bundle", "err", cmdErr, "message", cmdErr.Message, "stderr", cmdErr.StdErr)
@@ -76,7 +74,7 @@ func (h *GitPushHandler) push(w http.ResponseWriter, r *http.Request) (success b
 		return
 	}
 
-	err = git.PushLocalToRemote(branch)
+	err = git.PushLocalToRemote()
 	if err != nil {
 		log.Error("failed to push local to remote", "err", err)
 		http.Error(w, fmt.Sprintf("failed to apply bundle: %v", err), http.StatusInternalServerError)

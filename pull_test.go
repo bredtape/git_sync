@@ -16,40 +16,36 @@ import (
 
 // tests assumes that integrationtest/gogs-dev is running
 
-func createTestServerWithPullHandler(t *testing.T, repo RemoteRepo, branch string) (*http.Client, string) {
-	h := NewGitPullHandler(t.TempDir(), repo)
+func createTestServerWithPullHandler(t *testing.T) (*http.Client, string) {
+	h := NewGitPullHandler(t.TempDir())
 	mux := mux.NewRouter()
-	mux.Handle("/pull/{branch}", h)
+	mux.Handle("/pull", h)
 	server := httptest.NewServer(mux)
 
 	t.Cleanup(func() {
 		server.Close()
 	})
 
-	return server.Client(), server.URL + "/pull/" + branch
+	return server.Client(), server.URL + "/pull"
 }
 
 func TestPullRemoteRepoDoesNotExist(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
+	branch := "main"
 	gogsAdmin := NewGogsAdmin(user, password, baseURL)
-	repo, err := gogsAdmin.CreateRandomRepo()
+	repo, err := gogsAdmin.CreateRandomRepo(branch)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	repo.URL += "_not"
-	repo.Name += "_not"
 
-	t.Logf("non-existing repo, name=%s, cloneURL=%s", repo.Name, repo.URL)
+	t.Logf("non-existing repo, cloneURL=%s, branch=%s", repo.URL, repo.Branch)
 
-	branch := "main"
-	client, serverURL := createTestServerWithPullHandler(t, repo, branch)
+	client, serverURL := createTestServerWithPullHandler(t)
 
-	req, err := http.NewRequest(http.MethodGet, serverURL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	req := createPullHTTPRequest(t, serverURL, repo, 0)
 	t.Logf("Requesting %s", req.URL.String())
 
 	resp, err := client.Do(req)
@@ -67,21 +63,16 @@ func TestPullRemoteRepoDoesNotExist(t *testing.T) {
 func TestPullFullBundleEmptyRepo(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
-	gogsAdmin := NewGogsAdmin(user, password, baseURL)
-	repo, err := gogsAdmin.CreateRandomRepo()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf("Created repository, name=%s, cloneURL=%s", repo.Name, repo.URL)
-
 	branch := "main"
-	client, serverURL := createTestServerWithPullHandler(t, repo, branch)
-
-	req, err := http.NewRequest(http.MethodGet, serverURL, nil)
+	gogsAdmin := NewGogsAdmin(user, password, baseURL)
+	repo, err := gogsAdmin.CreateRandomRepo(branch)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	t.Logf("Created repository, cloneURL=%s, branch=%s", repo.URL, repo.Branch)
+	client, serverURL := createTestServerWithPullHandler(t)
+	req := createPullHTTPRequest(t, serverURL, repo, 0)
 	t.Logf("Requesting %s", req.URL.String())
 
 	resp, err := client.Do(req)
@@ -98,27 +89,30 @@ func TestPullFullBundleEmptyRepo(t *testing.T) {
 func TestPullFullBundleRepoHasCommits(t *testing.T) {
 	slog.SetLogLoggerLevel(slog.LevelDebug)
 
+	branch := "main"
 	gogsAdmin := NewGogsAdmin(user, password, baseURL)
-	repo, err := gogsAdmin.CreateRandomRepo()
+	repo, err := gogsAdmin.CreateRandomRepo(branch)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	t.Logf("Created repository, name=%s, cloneURL=%s", repo.Name, repo.URL)
-	branch := "main"
+	t.Logf("Created repository, cloneURL=%s, branch=%s", repo.URL, repo.Branch)
 
 	{
 		// add commits. Note that the TempDir returns a new directory each time
 		tempDir := t.TempDir()
 		t.Logf("using tempDir=%s", tempDir)
-		g := NewGIT(tempDir, repo, branch)
+		g, err := NewGIT(tempDir, repo)
+		if err != nil {
+			t.Fatal(err)
+		}
 		worktree, err := g.initLocal()
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		filename := filepath.Join(g.workDir, "example.txt")
-		err = os.WriteFile(filename, []byte("hello world! "+repo.Name), 0644)
+		err = os.WriteFile(filename, []byte("hello world! "+generateRandomString()), 0644)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -133,7 +127,7 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		err = g.PushLocalToRemote(branch)
+		err = g.PushLocalToRemote()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -141,12 +135,8 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 		t.Logf("pushed commits to remote repository")
 	}
 
-	client, serverURL := createTestServerWithPullHandler(t, repo, branch)
-
-	req, err := http.NewRequest(http.MethodGet, serverURL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client, serverURL := createTestServerWithPullHandler(t)
+	req := createPullHTTPRequest(t, serverURL, repo, 0)
 	t.Logf("Requesting %s", req.URL.String())
 
 	resp, err := client.Do(req)
@@ -160,11 +150,7 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 		t.Fatalf("expected status 200, got %d, body %s", resp.StatusCode, string(body))
 	}
 
-	// pull with 'since' parameter
-	req, err = http.NewRequest(http.MethodGet, serverURL+"?since=1h", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	req = createPullHTTPRequest(t, serverURL, repo, time.Hour)
 	t.Logf("Requesting %s", req.URL.String())
 
 	resp, err = client.Do(req)
@@ -181,10 +167,7 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 	// pull with 'since' parameter
 	t.Logf("sleeping for 2 seconds, because 'since' minimum value is 1s")
 	time.Sleep(2 * time.Second)
-	req, err = http.NewRequest(http.MethodGet, serverURL+"?since=1s", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	req = createPullHTTPRequest(t, serverURL, repo, time.Second)
 	t.Logf("Requesting %s", req.URL.String())
 
 	resp, err = client.Do(req)
@@ -197,4 +180,23 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("expected status 204, got %d, body %s", resp.StatusCode, string(body))
 	}
+}
+
+func createPullHTTPRequest(t *testing.T, serverURL string, repo RemoteRepo, since time.Duration) *http.Request {
+	t.Helper()
+
+	req, err := http.NewRequest(http.MethodGet, serverURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+repo.Token)
+	q := req.URL.Query()
+	q.Add("repository", repo.URL)
+	q.Add("branch", repo.Branch)
+	if since.Seconds() > 0 {
+		q.Add("since", since.String())
+	}
+	req.URL.RawQuery = q.Encode()
+	return req
 }

@@ -22,19 +22,28 @@ import (
 const remoteName = "origin"
 
 type GIT struct {
-	branch, workDir, tempDir string
-	remoteRepo               RemoteRepo
+	workDir, tempDir string
+	remoteRepo       RemoteRepo
 }
 
-func NewGIT(tempDir string, remoteRepo RemoteRepo, branch string) *GIT {
+func NewGIT(tempDir string, remoteRepo RemoteRepo) (*GIT, error) {
 	if tempDir == "" {
-		panic("tempDir must not be empty")
+		return nil, errors.New("tempDir not set")
 	}
+	if remoteRepo.URL == "" {
+		return nil, errors.New("remoteRepo.URL not set")
+	}
+	if remoteRepo.Branch == "" {
+		return nil, errors.New("branch not set")
+	}
+	if remoteRepo.Token == "" {
+		return nil, errors.New("remoteRepo.Token not set")
+	}
+
 	return &GIT{
-		workDir:    getWorkDir(tempDir, remoteRepo.Name, branch),
+		workDir:    getWorkDir(tempDir, remoteRepo.URL, remoteRepo.Branch),
 		tempDir:    tempDir,
-		remoteRepo: remoteRepo,
-		branch:     branch}
+		remoteRepo: remoteRepo}, nil
 }
 
 func (g GIT) ExistsLocal() (bool, error) {
@@ -66,7 +75,7 @@ func (g *GIT) cloneRepoToLocalTemp() (*git.Worktree, error) {
 	local, err := git.PlainClone(g.workDir, false, &git.CloneOptions{
 		RemoteName:    remoteName,
 		URL:           g.remoteRepo.URL,
-		ReferenceName: plumbing.NewBranchReferenceName(g.branch),
+		ReferenceName: plumbing.NewBranchReferenceName(g.remoteRepo.Branch),
 		SingleBranch:  true,
 		Auth:          g.getAuth()})
 	if err != nil {
@@ -77,7 +86,7 @@ func (g *GIT) cloneRepoToLocalTemp() (*git.Worktree, error) {
 			return nil, nil
 		}
 		slog.Warn("error type", "type", fmt.Sprintf("%T", err))
-		return nil, errors.Wrapf(err, "failed to clone repository %s for branch %s", g.remoteRepo.URL, g.branch)
+		return nil, errors.Wrapf(err, "failed to clone repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
 	}
 
 	return local.Worktree()
@@ -89,7 +98,7 @@ func (g *GIT) hasLocalBranch() (bool, error) {
 		return false, err
 	}
 
-	b, err := localRepo.Branch(g.branch)
+	b, err := localRepo.Branch(g.remoteRepo.Branch)
 	if err != nil {
 		return false, nil
 	}
@@ -102,7 +111,7 @@ func (g *GIT) hasLocalCommits() (bool, error) {
 		return false, err
 	}
 
-	ref, err := localRepo.Reference(plumbing.NewBranchReferenceName(g.branch), true)
+	ref, err := localRepo.Reference(plumbing.NewBranchReferenceName(g.remoteRepo.Branch), true)
 	if err != nil {
 		if errors.Is(err, plumbing.ErrReferenceNotFound) {
 			return false, nil
@@ -126,7 +135,7 @@ func (g *GIT) hasLocalCommits() (bool, error) {
 func (g *GIT) initLocal() (*git.Worktree, error) {
 	repo, err := git.PlainInit(g.workDir, false)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to init repository %s for branch %s", g.remoteRepo.URL, g.branch)
+		return nil, errors.Wrapf(err, "failed to init repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
 	}
 
 	_, err = repo.CreateRemote(&config.RemoteConfig{
@@ -134,17 +143,17 @@ func (g *GIT) initLocal() (*git.Worktree, error) {
 		URLs: []string{g.remoteRepo.URL},
 	})
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to register remote repository %s for branch %s", g.remoteRepo.URL, g.branch)
+		return nil, errors.Wrapf(err, "failed to register remote repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
 	}
 
-	branchRefName := plumbing.NewBranchReferenceName(g.branch)
+	branchRefName := plumbing.NewBranchReferenceName(g.remoteRepo.Branch)
 
 	err = repo.CreateBranch(&config.Branch{
-		Name:   g.branch,
+		Name:   g.remoteRepo.Branch,
 		Remote: remoteName,
 		Merge:  branchRefName})
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to create branch '%s' for repository %s", g.branch, g.remoteRepo.URL)
+		return nil, errors.Wrapf(err, "failed to create branch '%s' for repository %s", g.remoteRepo.Branch, g.remoteRepo.URL)
 	}
 
 	// here I swapped HEAD and the branch name
@@ -199,7 +208,7 @@ func (g *GIT) pullRepoToLocalTemp() (*git.Worktree, error) {
 
 	err = w.Pull(&git.PullOptions{
 		RemoteName:    remoteName,
-		ReferenceName: plumbing.NewBranchReferenceName(g.branch),
+		ReferenceName: plumbing.NewBranchReferenceName(g.remoteRepo.Branch),
 		SingleBranch:  true,
 		RemoteURL:     g.remoteRepo.URL,
 		Auth:          g.getAuth()})
@@ -208,12 +217,12 @@ func (g *GIT) pullRepoToLocalTemp() (*git.Worktree, error) {
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
 			return w, nil
 		}
-		return nil, errors.Wrapf(err, "failed to pull repository %s for branch %s", g.remoteRepo.URL, g.branch)
+		return nil, errors.Wrapf(err, "failed to pull repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
 	}
 	return w, nil
 }
 
-func (g *GIT) PushLocalToRemote(branch string) error {
+func (g *GIT) PushLocalToRemote() error {
 	localRepo, err := git.PlainOpen(g.workDir)
 	if err != nil {
 		return err
@@ -228,14 +237,14 @@ func (g *GIT) PushLocalToRemote(branch string) error {
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
 			return nil
 		}
-		return errors.Wrapf(err, "failed to push local repository %s for branch %s", g.remoteRepo.URL, branch)
+		return errors.Wrapf(err, "failed to push local repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
 	}
 	return nil
 
 }
 
 // apply bundle to local repo with "git fetch"
-func (g *GIT) ApplyBundleToLocal(r io.Reader, branch string) error {
+func (g *GIT) ApplyBundleToLocal(r io.Reader) error {
 	// "git pull" requires that the bundle is stored on disk
 	dir, err := g.getRandomTempDir()
 	if err != nil {
@@ -253,7 +262,7 @@ func (g *GIT) ApplyBundleToLocal(r io.Reader, branch string) error {
 		return errors.Wrap(err, "failed to write bundle to temp file")
 	}
 
-	cmd := exec.Command("git", "-C", g.workDir, "pull", tmpFile, branch)
+	cmd := exec.Command("git", "-C", g.workDir, "pull", tmpFile, g.remoteRepo.Branch)
 	cmd.Stdin = r
 	stderr := &bytes.Buffer{}
 	cmd.Stderr = stderr
@@ -263,7 +272,7 @@ func (g *GIT) ApplyBundleToLocal(r io.Reader, branch string) error {
 	err = cmd.Run()
 	if err != nil {
 		return &CommandError{
-			Message:  fmt.Sprintf("failed to apply bundle for repository %s and branch %s", g.remoteRepo.URL, branch),
+			Message:  fmt.Sprintf("failed to apply bundle for repository %s and branch %s", g.remoteRepo.URL, g.remoteRepo.Branch),
 			Err:      err,
 			StdErr:   stderr.String(),
 			ExitCode: cmd.ProcessState.ExitCode()}
@@ -278,10 +287,10 @@ type BundleOptions struct {
 }
 
 func (g *GIT) CreateBundleFromLocal(opt BundleOptions) ([]byte, error) {
-	log := slog.With("op", "CreateBundleFromLocal", "repo", g.remoteRepo, "branch", g.branch)
-	cmd := exec.Command("git", "-C", g.workDir, "bundle", "create", "-", g.branch)
+	log := slog.With("op", "CreateBundleFromLocal", "repo", g.remoteRepo, "branch", g.remoteRepo.Branch)
+	cmd := exec.Command("git", "-C", g.workDir, "bundle", "create", "-", g.remoteRepo.Branch)
 	if opt.Since != 0 {
-		cmd = exec.Command("git", "-C", g.workDir, "bundle", "create", "-", fmt.Sprintf("--since=%d.seconds.ago", int64(opt.Since.Seconds())), g.branch)
+		cmd = exec.Command("git", "-C", g.workDir, "bundle", "create", "-", fmt.Sprintf("--since=%d.seconds.ago", int64(opt.Since.Seconds())), g.remoteRepo.Branch)
 	}
 	log.Debug("running command", "cmd", cmd.String())
 
@@ -291,7 +300,7 @@ func (g *GIT) CreateBundleFromLocal(opt BundleOptions) ([]byte, error) {
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		return nil, &CommandError{
-			Message:  fmt.Sprintf("failed to bundle repository %s for branch %s", g.remoteRepo.URL, g.branch),
+			Message:  fmt.Sprintf("failed to bundle repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch),
 			Err:      err,
 			StdErr:   stderr.String(),
 			ExitCode: cmd.ProcessState.ExitCode()}
@@ -312,7 +321,7 @@ func (g *GIT) GetBundleInfo(bundleData []byte) (BundleInfo, error) {
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {
 		return BundleInfo{}, &CommandError{
-			Message:  fmt.Sprintf("failed to verify bundle for repository %s and branch %s", g.remoteRepo.URL, g.branch),
+			Message:  fmt.Sprintf("failed to verify bundle for repository %s and branch %s", g.remoteRepo.URL, g.remoteRepo.Branch),
 			Err:      err,
 			StdErr:   stderr.String(),
 			ExitCode: cmd.ProcessState.ExitCode()}
@@ -340,12 +349,12 @@ func (g *GIT) getRandomTempDir() (string, error) {
 func (g *GIT) getWorktree() (*git.Worktree, error) {
 	localRepo, err := git.PlainOpen(g.workDir)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to open local repository %s for branch %s", g.remoteRepo.URL, g.branch)
+		return nil, errors.Wrapf(err, "failed to open local repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
 	}
 
 	w, err := localRepo.Worktree()
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to get worktree for local repository %s for branch %s", g.remoteRepo.URL, g.branch)
+		return nil, errors.Wrapf(err, "failed to get worktree for local repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
 	}
 	return w, nil
 }
@@ -353,5 +362,5 @@ func (g *GIT) getWorktree() (*git.Worktree, error) {
 func (g *GIT) getAuth() http.AuthMethod {
 	return &http.BasicAuth{
 		Username: "not_used", // must not be empty
-		Password: g.remoteRepo.AuthToken}
+		Password: g.remoteRepo.Token}
 }
