@@ -1,6 +1,6 @@
 module github.com/bredtape/git_sync
 
-go 1.23.2
+go 1.23.0
 
 require (
 	github.com/bredtape/slogging v0.0.0-20230815085553-a9176994f48e
