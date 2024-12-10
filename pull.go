@@ -140,7 +140,7 @@ func (h *GitPullHandler) pull(log *slog.Logger, remoteRepo RemoteRepo, opt Bundl
 
 	// Write the bundle to the response
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename=git-bundle")
+	w.Header().Set("Content-Disposition", "attachment; filename=git.bundle")
 	w.Write(bundleData)
 	log.Debug("bundle created")
 	return true
