@@ -110,6 +110,39 @@ func TestPushPartialBundleMissingHistoryToExistingRepo(t *testing.T) {
 	}
 }
 
+func TestPushFullBundleExistingRepoTokenIncorrect(t *testing.T) {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
+
+	branch := "main"
+	gogsAdmin := NewGogsAdmin(user, password, baseURL)
+	repo, err := gogsAdmin.CreateRandomRepo(branch)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo.Token = "incorrect"
+
+	t.Logf("Created repository, cloneURL=%s, branch=%s", repo.URL, repo.Branch)
+
+	client, serverURL := createTestServerWithPushHandler(t)
+
+	// full bundle
+	{
+		req := createPushHTTPRequest(t, serverURL, repo, testdata.FullBundle)
+		t.Logf("pushing full bundle to %s", req.URL.String())
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		expectedStatus := http.StatusUnauthorized
+		if resp.StatusCode != expectedStatus {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected status %d, got %d, body: %s", expectedStatus, resp.StatusCode, string(body))
+		}
+	}
+}
+
 func createPushHTTPRequest(t *testing.T, serverURL string, repo RemoteRepo, bundleData []byte) *http.Request {
 	t.Helper()
 

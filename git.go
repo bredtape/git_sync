@@ -21,6 +21,10 @@ import (
 
 const remoteName = "origin"
 
+var (
+	ErrAuthFailed = errors.New("authentication failed")
+)
+
 type GIT struct {
 	workDir, tempDir string
 	remoteRepo       RemoteRepo
@@ -84,6 +88,9 @@ func (g *GIT) cloneRepoToLocalTemp() (*git.Worktree, error) {
 		}
 		if errors.Is(err, transport.ErrRepositoryNotFound) {
 			return nil, nil
+		}
+		if errors.Is(err, transport.ErrAuthenticationRequired) {
+			return nil, ErrAuthFailed
 		}
 		slog.Warn("error type", "type", fmt.Sprintf("%T", err))
 		return nil, errors.Wrapf(err, "failed to clone repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
@@ -217,6 +224,9 @@ func (g *GIT) pullRepoToLocalTemp() (*git.Worktree, error) {
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
 			return w, nil
 		}
+		if errors.Is(err, transport.ErrAuthorizationFailed) {
+			return nil, ErrAuthFailed
+		}
 		return nil, errors.Wrapf(err, "failed to pull repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
 	}
 	return w, nil
@@ -236,6 +246,9 @@ func (g *GIT) PushLocalToRemote() error {
 	if err != nil {
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
 			return nil
+		}
+		if errors.Is(err, transport.ErrAuthorizationFailed) {
+			return ErrAuthFailed
 		}
 		return errors.Wrapf(err, "failed to push local repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
 	}

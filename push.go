@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/pkg/errors"
 )
 
 type GitPushHandler struct {
@@ -48,8 +50,10 @@ func (h *GitPushHandler) push(log *slog.Logger, remoteRepo RemoteRepo, bundleDat
 	// Clone to local
 	worktree, err := git.SyncRepoToLocalTemp()
 	if err != nil {
-		if cmdErr, ok := err.(*CommandError); ok {
-			log.Error("sync to local failed", "err", cmdErr)
+		log.Error("sync to local failed", "err", err)
+		if errors.Is(err, ErrAuthFailed) {
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
 		}
 		http.Error(w, fmt.Sprintf("failed to sync repository: %v", err), http.StatusInternalServerError)
 		return
@@ -77,6 +81,10 @@ func (h *GitPushHandler) push(log *slog.Logger, remoteRepo RemoteRepo, bundleDat
 	err = git.PushLocalToRemote()
 	if err != nil {
 		log.Error("failed to push local to remote", "err", err)
+		if errors.Is(err, ErrAuthFailed) {
+			http.Error(w, "authentication required", http.StatusUnauthorized)
+			return
+		}
 		http.Error(w, fmt.Sprintf("failed to apply bundle: %v", err), http.StatusInternalServerError)
 		return
 	}

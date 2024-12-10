@@ -136,49 +136,75 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 	}
 
 	client, serverURL := createTestServerWithPullHandler(t)
-	req := createPullHTTPRequest(t, serverURL, repo, 0)
-	t.Logf("Requesting %s", req.URL.String())
 
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatal(err)
+	{
+		req := createPullHTTPRequest(t, serverURL, repo, 0)
+		t.Logf("Requesting %s", req.URL.String())
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected status 200, got %d, body %s", resp.StatusCode, string(body))
+		}
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected status 200, got %d, body %s", resp.StatusCode, string(body))
-	}
+	{
+		req := createPullHTTPRequest(t, serverURL, repo, time.Hour)
+		t.Logf("Requesting %s", req.URL.String())
 
-	req = createPullHTTPRequest(t, serverURL, repo, time.Hour)
-	t.Logf("Requesting %s", req.URL.String())
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
 
-	resp, err = client.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected status 200, got %d, body %s", resp.StatusCode, string(body))
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected status 200, got %d, body %s", resp.StatusCode, string(body))
+		}
 	}
 
 	// pull with 'since' parameter
-	t.Logf("sleeping for 2 seconds, because 'since' minimum value is 1s")
-	time.Sleep(2 * time.Second)
-	req = createPullHTTPRequest(t, serverURL, repo, time.Second)
-	t.Logf("Requesting %s", req.URL.String())
+	{
+		t.Logf("sleeping for 2 seconds, because 'since' minimum value is 1s")
+		time.Sleep(2 * time.Second)
+		req := createPullHTTPRequest(t, serverURL, repo, time.Second)
+		t.Logf("Requesting %s", req.URL.String())
 
-	resp, err = client.Do(req)
-	if err != nil {
-		t.Fatal(err)
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNoContent {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected status 204, got %d, body %s", resp.StatusCode, string(body))
+		}
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNoContent {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("expected status 204, got %d, body %s", resp.StatusCode, string(body))
+	// pull with incorrect token
+	{
+		repo.Token = "incorrect"
+		req := createPullHTTPRequest(t, serverURL, repo, 0)
+		t.Logf("pull with incorrect token %s. But this does not fail. Pull does not require auth here", req.URL.String())
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		expectedStatus := http.StatusOK
+		if resp.StatusCode != expectedStatus {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected status %d, got %d, body %s", expectedStatus, resp.StatusCode, string(body))
+		}
 	}
 }
 
