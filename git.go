@@ -300,7 +300,7 @@ type BundleOptions struct {
 }
 
 func (g *GIT) CreateBundleFromLocal(opt BundleOptions) ([]byte, error) {
-	log := slog.With("op", "CreateBundleFromLocal", "repo", g.remoteRepo, "branch", g.remoteRepo.Branch)
+	log := slog.With("op", "CreateBundleFromLocal", "repo.url", g.remoteRepo.URL, "repo.branch", g.remoteRepo.Branch)
 	cmd := exec.Command("git", "-C", g.workDir, "bundle", "create", "-", g.remoteRepo.Branch)
 	if opt.Since != 0 {
 		cmd = exec.Command("git", "-C", g.workDir, "bundle", "create", "-", fmt.Sprintf("--since=%d.seconds.ago", int64(opt.Since.Seconds())), g.remoteRepo.Branch)
