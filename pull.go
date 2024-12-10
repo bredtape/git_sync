@@ -38,7 +38,7 @@ func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	log = log.With("repo.url", remoteRepo.URL, "repo.branch", remoteRepo.Branch, "repo.token", remoteRepo.Token)
+	log = log.With("repo.url", remoteRepo.URL, "repo.branch", remoteRepo.Branch)
 
 	opt := BundleOptions{}
 	sinceRaw := r.URL.Query().Get("since")

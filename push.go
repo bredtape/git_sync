@@ -26,7 +26,7 @@ func (h *GitPushHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	log := slog.With("op", "GitPushHandler.ServeHTTP", "repo.url", remoteRepo.URL, "repo.branch", remoteRepo.Branch, "repo.token", remoteRepo.Token)
+	log := slog.With("op", "GitPushHandler.ServeHTTP", "repo.url", remoteRepo.URL, "repo.branch", remoteRepo.Branch)
 
 	metricOps.WithLabelValues("push", remoteRepo.URL).Inc()
 	mErr := metricOpsError.WithLabelValues("push", remoteRepo.URL)
