@@ -247,7 +247,7 @@ func (g *GIT) PushLocalToRemote() error {
 		if errors.Is(err, git.NoErrAlreadyUpToDate) {
 			return nil
 		}
-		if errors.Is(err, transport.ErrAuthorizationFailed) {
+		if errors.Is(err, transport.ErrAuthorizationFailed) || errors.Is(err, transport.ErrAuthenticationRequired) {
 			return ErrAuthFailed
 		}
 		return errors.Wrapf(err, "failed to push local repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
