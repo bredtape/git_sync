@@ -9,14 +9,15 @@ import (
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
 var (
-	metricOps = prometheus.NewCounterVec(prometheus.CounterOpts{
+	metricOps = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "git_sync_ops_total",
 		Help: "Total number of git sync operations attempted"}, []string{"op", "repository_url"})
 
-	metricOpsError = prometheus.NewCounterVec(prometheus.CounterOpts{
+	metricOpsError = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "git_sync_ops_error_total",
 		Help: "Total number of git sync operations attempted, that resulted in some error"}, []string{"op", "repository_url"})
 )
