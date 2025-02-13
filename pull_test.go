@@ -45,7 +45,7 @@ func TestPullRemoteRepoDoesNotExist(t *testing.T) {
 
 	client, serverURL := createTestServerWithPullHandler(t)
 
-	req := createPullHTTPRequest(t, serverURL, repo, 0)
+	req := createPullHTTPRequest(t, serverURL, repo, 0, time.Time{})
 	t.Logf("Requesting %s", req.URL.String())
 
 	resp, err := client.Do(req)
@@ -72,7 +72,7 @@ func TestPullFullBundleEmptyRepo(t *testing.T) {
 
 	t.Logf("Created repository, cloneURL=%s, branch=%s", repo.URL, repo.Branch)
 	client, serverURL := createTestServerWithPullHandler(t)
-	req := createPullHTTPRequest(t, serverURL, repo, 0)
+	req := createPullHTTPRequest(t, serverURL, repo, 0, time.Time{})
 	t.Logf("Requesting %s", req.URL.String())
 
 	resp, err := client.Do(req)
@@ -138,7 +138,7 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 	client, serverURL := createTestServerWithPullHandler(t)
 
 	{
-		req := createPullHTTPRequest(t, serverURL, repo, 0)
+		req := createPullHTTPRequest(t, serverURL, repo, 0, time.Time{})
 		t.Logf("Requesting %s", req.URL.String())
 
 		resp, err := client.Do(req)
@@ -154,7 +154,7 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 	}
 
 	{
-		req := createPullHTTPRequest(t, serverURL, repo, time.Hour)
+		req := createPullHTTPRequest(t, serverURL, repo, time.Hour, time.Time{})
 		t.Logf("Requesting %s", req.URL.String())
 
 		resp, err := client.Do(req)
@@ -173,7 +173,26 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 	{
 		t.Logf("sleeping for 2 seconds, because 'since' minimum value is 1s")
 		time.Sleep(2 * time.Second)
-		req := createPullHTTPRequest(t, serverURL, repo, time.Second)
+		req := createPullHTTPRequest(t, serverURL, repo, time.Second, time.Time{})
+		t.Logf("Requesting %s", req.URL.String())
+
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNoContent {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("expected status 204, got %d, body %s", resp.StatusCode, string(body))
+		}
+	}
+
+	// pull with 'after' parameter
+	{
+		t.Logf("sleeping for 2 seconds, because 'after' minimum value is 1s")
+		time.Sleep(2 * time.Second)
+		req := createPullHTTPRequest(t, serverURL, repo, 0, time.Now().Add(-time.Second))
 		t.Logf("Requesting %s", req.URL.String())
 
 		resp, err := client.Do(req)
@@ -191,7 +210,7 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 	// pull with incorrect token
 	{
 		repo.Token = "incorrect"
-		req := createPullHTTPRequest(t, serverURL, repo, 0)
+		req := createPullHTTPRequest(t, serverURL, repo, 0, time.Time{})
 		t.Logf("pull with incorrect token %s. But this does not fail. Pull does not require auth here", req.URL.String())
 
 		resp, err := client.Do(req)
@@ -208,7 +227,7 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 	}
 }
 
-func createPullHTTPRequest(t *testing.T, serverURL string, repo RemoteRepo, since time.Duration) *http.Request {
+func createPullHTTPRequest(t *testing.T, serverURL string, repo RemoteRepo, since time.Duration, after time.Time) *http.Request {
 	t.Helper()
 
 	req, err := http.NewRequest(http.MethodGet, serverURL, nil)
@@ -222,6 +241,9 @@ func createPullHTTPRequest(t *testing.T, serverURL string, repo RemoteRepo, sinc
 	q.Add("branch", repo.Branch)
 	if since.Seconds() > 0 {
 		q.Add("since", since.String())
+	}
+	if !after.IsZero() {
+		q.Add("after", after.UTC().Format(time.RFC3339))
 	}
 	req.URL.RawQuery = q.Encode()
 	return req

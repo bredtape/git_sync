@@ -19,7 +19,10 @@ import (
 	"github.com/pkg/errors"
 )
 
-const remoteName = "origin"
+const (
+	remoteName      = "origin"
+	afterTimeFormat = "2006-01-02T15:04:05Z"
+)
 
 var (
 	ErrAuthFailed = errors.New("authentication failed")
@@ -297,6 +300,13 @@ func (g *GIT) ApplyBundleToLocal(r io.Reader) error {
 type BundleOptions struct {
 	// since, is the lookback duration for the bundle. Optional.
 	Since time.Duration
+
+	// after timestamp, optional
+	After time.Time
+}
+
+func (opt BundleOptions) HasAny() bool {
+	return opt.Since != 0 || !opt.After.IsZero()
 }
 
 func (g *GIT) CreateBundleFromLocal(opt BundleOptions) ([]byte, error) {
@@ -304,6 +314,8 @@ func (g *GIT) CreateBundleFromLocal(opt BundleOptions) ([]byte, error) {
 	cmd := exec.Command("git", "-C", g.workDir, "bundle", "create", "-", g.remoteRepo.Branch)
 	if opt.Since != 0 {
 		cmd = exec.Command("git", "-C", g.workDir, "bundle", "create", "-", fmt.Sprintf("--since=%d.seconds.ago", int64(opt.Since.Seconds())), g.remoteRepo.Branch)
+	} else if !opt.After.IsZero() {
+		cmd = exec.Command("git", "-C", g.workDir, "bundle", "create", "-", fmt.Sprintf("--after=%s", opt.After.Format(afterTimeFormat)), g.remoteRepo.Branch)
 	}
 	log.Debug("running command", "cmd", cmd.String())
 

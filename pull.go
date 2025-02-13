@@ -61,6 +61,24 @@ func (h *GitPullHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log = log.With("since", d)
 	}
 
+	afterRaw := r.URL.Query().Get("after")
+	if afterRaw != "" {
+		t, err := time.Parse(time.RFC3339, afterRaw)
+		if err != nil {
+			log.Error("invalid after time", "err", err)
+			http.Error(w, fmt.Sprintf("Invalid after time '%s'", afterRaw), http.StatusBadRequest)
+			return
+		}
+		if t.IsZero() {
+			log.Error("zero after time")
+			http.Error(w, "After time must be non-zero", http.StatusBadRequest)
+			return
+		}
+
+		opt.After = t
+		log = log.With("after", t)
+	}
+
 	metricOps.WithLabelValues("pull", remoteRepo.URL).Inc()
 	mErr := metricOpsError.WithLabelValues("pull", remoteRepo.URL)
 
@@ -127,7 +145,7 @@ func (h *GitPullHandler) pull(log *slog.Logger, remoteRepo RemoteRepo, opt Bundl
 	bundleData, err := git.CreateBundleFromLocal(opt)
 	if err != nil {
 		if cmdErr, ok := err.(*CommandError); ok {
-			if opt.Since != 0 && strings.Contains(cmdErr.StdErr, "Refusing to create empty bundle") {
+			if opt.HasAny() && strings.Contains(cmdErr.StdErr, "Refusing to create empty bundle") {
 				log.Debug("no new commits since", "since", opt.Since)
 				http.Error(w, fmt.Sprintf("no new commits since %v", time.Now().Add(-opt.Since)), http.StatusNoContent)
 				return
