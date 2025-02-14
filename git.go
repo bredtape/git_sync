@@ -1,6 +1,7 @@
 package git_sync
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/base64"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-git/go-git/v5"
@@ -334,7 +336,63 @@ func (g *GIT) CreateBundleFromLocal(opt BundleOptions) ([]byte, error) {
 }
 
 type BundleInfo struct {
-	IsCompleteHistory bool
+	IsComplete    bool
+	ContainsRef   string
+	RequiresRef   string
+	HashAlgorithm string
+	IsOkay        bool
+}
+
+func (b BundleInfo) Validate() error {
+	if !b.IsOkay {
+		return errors.New("bundle is not okay")
+	}
+	if b.ContainsRef == "" {
+		return errors.New("bundle does not contain ref")
+	}
+	if !b.IsComplete && b.RequiresRef != "" {
+		return errors.New("bundle does not specify required ref, but is partial")
+	}
+	if b.HashAlgorithm == "" {
+		return errors.New("bundle does not specify hash algorithm")
+	}
+	return nil
+}
+
+func ParseBundleVerifyOutput(output string) BundleInfo {
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	var bundle BundleInfo
+
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		// Check for complete history
+		if line == "The bundle records a complete history." {
+			bundle.IsComplete = true
+		}
+
+		// Check for hash algorithm
+		const hashPrefix = "The bundle uses this hash algorithm: "
+		if strings.HasPrefix(line, hashPrefix) {
+			bundle.HashAlgorithm = strings.TrimPrefix(line, hashPrefix)
+		}
+
+		// Check for contained ref
+		if strings.HasPrefix(line, "The bundle contains this ref:") {
+			scanner.Scan() // Move to next line which contains the ref
+			bundle.ContainsRef = scanner.Text()
+		} else if strings.HasPrefix(line, "The bundle requires this ref:") {
+			scanner.Scan() // Move to next line which contains the ref
+			bundle.RequiresRef = scanner.Text()
+		} else if strings.HasPrefix(line, "The bundle records a complete history.") {
+			bundle.IsComplete = true
+		} else if strings.HasSuffix(line, " is okay") {
+			// Ignore final verification message
+			bundle.IsOkay = true
+		}
+	}
+
+	return bundle
 }
 
 func (g *GIT) GetBundleInfo(bundleData []byte) (BundleInfo, error) {
@@ -352,10 +410,49 @@ func (g *GIT) GetBundleInfo(bundleData []byte) (BundleInfo, error) {
 			ExitCode: cmd.ProcessState.ExitCode()}
 	}
 
-	result := BundleInfo{
-		IsCompleteHistory: bytes.Contains(stdout.Bytes(), []byte("complete history"))}
+	info := ParseBundleVerifyOutput(stdout.String())
+	if ve := info.Validate(); ve != nil {
+		return info, ve
+	}
+	return info, nil
+}
 
-	return result, nil
+type Head struct {
+	CommitID string
+	Ref      string
+}
+
+func ParseBundleListHeadsOutput(output string) ([]Head, error) {
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	var heads []Head
+
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Split(line, " ")
+		if len(parts) != 2 {
+			return nil, fmt.Errorf("invalid line in bundle list-heads output: %s", line)
+		}
+		heads = append(heads, Head{CommitID: parts[0], Ref: parts[1]})
+	}
+	return heads, nil
+}
+
+func (g *GIT) GetBundleListHeads(bundleData []byte) ([]Head, error) {
+	cmd := exec.Command("git", "bundle", "list-heads", "-")
+	cmd.Stdin = bytes.NewReader(bundleData)
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return nil, &CommandError{
+			Message:  fmt.Sprintf("failed to verify bundle for repository %s and branch %s", g.remoteRepo.URL, g.remoteRepo.Branch),
+			Err:      err,
+			StdErr:   stderr.String(),
+			ExitCode: cmd.ProcessState.ExitCode()}
+	}
+
+	return ParseBundleListHeadsOutput(stdout.String())
 }
 
 func getWorkDir(tempDir, remoteURL, branch string) string {

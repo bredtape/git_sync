@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,6 +138,7 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 
 	client, serverURL := createTestServerWithPullHandler(t)
 
+	// pull full bundle
 	{
 		req := createPullHTTPRequest(t, serverURL, repo, 0, time.Time{})
 		t.Logf("Requesting %s", req.URL.String())
@@ -151,8 +153,32 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 			body, _ := io.ReadAll(resp.Body)
 			t.Fatalf("expected status 200, got %d, body %s", resp.StatusCode, string(body))
 		}
+
+		head := resp.Header.Get("X-Git-Head")
+		if strings.TrimSpace(head) == "" {
+			t.Error("X-Git-Head")
+		}
+		expectedSize := len("e36545a9cf4dfa8485ed103e500770f5ac9a28fe")
+		if len(head) != expectedSize {
+			t.Errorf("X-Git-Head should be %d characters long, but was '%s'", expectedSize, head)
+		}
+
+		isPartial := resp.Header.Get("X-Git-IsPartial")
+		if strings.TrimSpace(isPartial) != "false" {
+			t.Errorf("X-Git-IsPartial should be false, but is %s", isPartial)
+		}
+
+		hash := resp.Header.Get("X-Git-Hash")
+		if strings.TrimSpace(hash) == "" {
+			t.Errorf("X-Git-Hash should be specified but is empty")
+		}
+		expectedSize = len("eff8d1deb5c048dcf04524740cdee6378298b87507f49d283d153e77502dff08")
+		if len(hash) != expectedSize {
+			t.Errorf("X-Git-Hash should be %d characters long, but was '%s'", expectedSize, hash)
+		}
 	}
 
+	// pull partial with 'since' parameter
 	{
 		req := createPullHTTPRequest(t, serverURL, repo, time.Hour, time.Time{})
 		t.Logf("Requesting %s", req.URL.String())
@@ -166,6 +192,29 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(resp.Body)
 			t.Fatalf("expected status 200, got %d, body %s", resp.StatusCode, string(body))
+		}
+
+		head := resp.Header.Get("X-Git-Head")
+		if strings.TrimSpace(head) == "" {
+			t.Error("X-Git-Head")
+		}
+		expectedSize := len("e36545a9cf4dfa8485ed103e500770f5ac9a28fe")
+		if len(head) != expectedSize {
+			t.Errorf("X-Git-Head should be %d characters long, but was '%s'", expectedSize, head)
+		}
+
+		isPartial := resp.Header.Get("X-Git-IsPartial")
+		if strings.TrimSpace(isPartial) != "true" {
+			t.Errorf("X-Git-IsPartial should be true, but is %s", isPartial)
+		}
+
+		hash := resp.Header.Get("X-Git-Hash")
+		if strings.TrimSpace(hash) == "" {
+			t.Errorf("X-Git-Hash should be specified but is empty")
+		}
+		expectedSize = len("eff8d1deb5c048dcf04524740cdee6378298b87507f49d283d153e77502dff08")
+		if len(hash) != expectedSize {
+			t.Errorf("X-Git-Hash should be %d characters long, but was '%s'", expectedSize, hash)
 		}
 	}
 

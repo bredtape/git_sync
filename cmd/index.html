@@ -24,6 +24,16 @@
         given timestamp (RFC3339). Example: after=2025-02-13T08:00:00Z
       </li>
     </ul>
+    <p>Pull returns the following headers</p>
+    <ul>
+      <li>X-Git-Head, with the Commit ID of the head</li>
+      <li>X-Git-IsPartial, boolean whether the bundle is partial (or full)</li>
+      <li>
+        X-Git-Hash, a hash of the commit ID and options used (since and after)
+      </li>
+    </ul>
+    The filename of the bundle is also set to git_&ltcommit
+    ID&gt_&lthash&gt.bundle
     <h2>Authentication</h2>
     <p>
       To authenticate to the 'repository', set the Authorization header to

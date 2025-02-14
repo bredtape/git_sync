@@ -1,6 +1,8 @@
 package git_sync
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -156,9 +158,26 @@ func (h *GitPullHandler) pull(log *slog.Logger, remoteRepo RemoteRepo, opt Bundl
 		return
 	}
 
+	heads, err := git.GetBundleListHeads(bundleData)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to get bundle info: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	if len(heads) != 1 {
+		http.Error(w, fmt.Sprintf("Expected exactly one head, got %v", heads), http.StatusInternalServerError)
+		return
+	}
+
+	commitID := heads[0].CommitID
+	w.Header().Set("X-Git-Head", commitID)
+	w.Header().Set("X-Git-IsPartial", fmt.Sprintf("%t", opt.HasAny()))
+	hash := createHash(heads[0], opt)
+	w.Header().Set("X-Git-Hash", hash)
+
 	// Write the bundle to the response
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename=git.bundle")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=git_%s_%s.bundle", commitID, hash))
 	w.Write(bundleData)
 	log.Debug("bundle created")
 	return true
@@ -169,10 +188,10 @@ func extractArgs(r *http.Request) (RemoteRepo, error) {
 		URL:    r.URL.Query().Get("repository"),
 		Branch: r.URL.Query().Get("branch")}
 	if args.URL == "" {
-		return args, fmt.Errorf("no 'repository' specified")
+		return args, errors.New("no 'repository' specified")
 	}
 	if args.Branch == "" {
-		return args, fmt.Errorf("no 'branch' specified")
+		return args, errors.New("no 'branch' specified")
 	}
 
 	token, err := extractAuthToken(r)
@@ -191,4 +210,9 @@ func extractAuthToken(r *http.Request) (string, error) {
 	}
 
 	return strings.TrimPrefix(authHeader, "Bearer "), nil
+}
+
+func createHash(head Head, opt BundleOptions) string {
+	h := sha256.Sum256([]byte(fmt.Sprintf("%s|%s|%s", head.CommitID, opt.After, opt.Since)))
+	return hex.EncodeToString(h[:])
 }
