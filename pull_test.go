@@ -167,15 +167,6 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 		if strings.TrimSpace(isPartial) != "false" {
 			t.Errorf("X-Git-IsPartial should be false, but is %s", isPartial)
 		}
-
-		hash := resp.Header.Get("X-Git-Hash")
-		if strings.TrimSpace(hash) == "" {
-			t.Errorf("X-Git-Hash should be specified but is empty")
-		}
-		expectedSize = len("eff8d1deb5c048dcf04524740cdee6378298b87507f49d283d153e77502dff08")
-		if len(hash) != expectedSize {
-			t.Errorf("X-Git-Hash should be %d characters long, but was '%s'", expectedSize, hash)
-		}
 	}
 
 	// pull partial with 'since' parameter
@@ -206,15 +197,6 @@ func TestPullFullBundleRepoHasCommits(t *testing.T) {
 		isPartial := resp.Header.Get("X-Git-IsPartial")
 		if strings.TrimSpace(isPartial) != "true" {
 			t.Errorf("X-Git-IsPartial should be true, but is %s", isPartial)
-		}
-
-		hash := resp.Header.Get("X-Git-Hash")
-		if strings.TrimSpace(hash) == "" {
-			t.Errorf("X-Git-Hash should be specified but is empty")
-		}
-		expectedSize = len("eff8d1deb5c048dcf04524740cdee6378298b87507f49d283d153e77502dff08")
-		if len(hash) != expectedSize {
-			t.Errorf("X-Git-Hash should be %d characters long, but was '%s'", expectedSize, hash)
 		}
 	}
 

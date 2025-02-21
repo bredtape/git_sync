@@ -173,7 +173,6 @@ func (h *GitPullHandler) pull(log *slog.Logger, remoteRepo RemoteRepo, opt Bundl
 	w.Header().Set("X-Git-Head", commitID)
 	w.Header().Set("X-Git-IsPartial", fmt.Sprintf("%t", opt.HasAny()))
 	hash := createHash(heads[0], opt)
-	w.Header().Set("X-Git-Hash", hash)
 
 	// Write the bundle to the response
 	w.Header().Set("Content-Type", "application/octet-stream")
