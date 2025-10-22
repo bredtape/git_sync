@@ -79,7 +79,7 @@ func readArgs() Config {
 		fs.Usage()
 		os.Exit(0)
 	}
-	slogging.SetDefault(logLevel, false, logJSON)
+	slogging.SetDefaults(slog.HandlerOptions{Level: logLevel}, logJSON)
 
 	if config.TempDir == "" {
 		config.TempDir = os.TempDir()
