@@ -100,7 +100,7 @@ func (g *GIT) cloneRepoToLocalTemp() (*git.Worktree, error) {
 		slog.Warn("plain clone failed", "err", err,
 			"error type", fmt.Sprintf("%T", err),
 			"url", g.remoteRepo.URL, "branch", g.remoteRepo.Branch)
-		return nil, errors.Wrapf(err, "failed to clone repository %s for branch %s", g.remoteRepo.URL, g.remoteRepo.Branch)
+		return nil, errors.Wrapf(err, "failed to clone repository '%s' for branch '%s'", g.remoteRepo.URL, g.remoteRepo.Branch)
 	}
 
 	return local.Worktree()
